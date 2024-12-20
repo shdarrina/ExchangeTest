@@ -9,7 +9,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Configuration.AddEnvFile();
-builder.Services.AddOpenApi();
+// builder.Services.AddOpenApi();
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAllOrigins",
@@ -28,7 +28,7 @@ app.UseCors("AllowAllOrigins");
 
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
+    // app.MapOpenApi();
 }
 app.UseHttpsRedirection();
 
@@ -38,19 +38,19 @@ app.MapGet("/attachments", async (IConfiguration configuration, ILogger<Program>
     if (tenantId == null)
     {
         logger.LogError("AzureAd:TenantId is not configured");
-        return Results.InternalServerError("AzureAd:TenantId is not configured");
+        // return Results.InternalServerError("AzureAd:TenantId is not configured");
     }
     var clientId = configuration.GetSection("AzureAd")["ClientId"];
     if (clientId == null)
     {
         logger.LogError("AzureAd:ClientId is not configured");
-        return Results.InternalServerError("AzureAd:ClientId is not configured");
+        // return Results.InternalServerError("AzureAd:ClientId is not configured");
     }
     var clientSecret = configuration.GetSection("AzureAd")["ClientSecret"];
     if (clientSecret == null)
     {
         logger.LogError("AzureAd:ClientSecret is not configured");
-        return Results.InternalServerError("AzureAd:ClientSecret is not configured");
+        // return Results.InternalServerError("AzureAd:ClientSecret is not configured");
     }
 
     // var credential = new DefaultAzureCredential();
@@ -75,9 +75,9 @@ app.MapGet("/attachments", async (IConfiguration configuration, ILogger<Program>
 
     var attachmentTasks = messagesResponse.Value?
         .Select(async m => (await userInbox.Messages[m.Id].Attachments.GetAsync())?.Value ?? new List<Attachment>());
-    var attachments = (await Task.WhenAll(attachmentTasks ?? []))
+    var attachments = (await Task.WhenAll(attachmentTasks))
         .SelectMany(a => a)
-        .Select(a => new { a.Id, a.Name });
+        .Select(a => new { myMessage.Subject, AttachmentId = a.Id, Filename = a.Name });
 
     return (attachments?.Any() ?? false) ? Results.Ok(attachments) : Results.NotFound();
     // return Results.File(fileAttachment.ContentBytes, fileAttachment.ContentType, fileAttachment.Name);
