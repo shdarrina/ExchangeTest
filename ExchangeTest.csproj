@@ -1,17 +1,17 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
-    <TargetFramework>net7.0</TargetFramework>
+    <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <EnvironmentName>Development</EnvironmentName>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Azure.Identity" Version="1.13.1" />
-    <!-- <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="9.0.0" /> -->
-    <PackageReference Include="Microsoft.Graph" Version="5.67.0" />
-    <PackageReference Include="Microsoft.Identity.Client" Version="4.66.2" />
-    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="Microsoft.Graph" Version="5.72.0" />
+    <PackageReference Include="Microsoft.Identity.Web" Version="3.7.1" />
+    <PackageReference Include="MM.Common.Api" Version="25.4.12" />
   </ItemGroup>
 
 </Project>
