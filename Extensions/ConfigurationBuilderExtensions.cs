@@ -1,8 +1,8 @@
 namespace ExchangeTest.Extensions;
 
-public static class ConfigurationBuilderExtensions
+internal static class ConfigurationBuilderExtensions
 {
-    public static IConfigurationBuilder AddEnvFile(this IConfigurationBuilder builder, string path = ".env")
+    internal static IConfigurationBuilder AddEnvFile(this IConfigurationBuilder builder, string path = ".env")
     {
         if (!File.Exists(path))
         {
