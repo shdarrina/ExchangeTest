@@ -298,8 +298,10 @@ app.MapGet("/", async (HttpContext context, [FromServices]IMemoryCache memoryCac
 .WithDisplayName("Save Token")
 .WithTags("Token");
 
-app.MapGet("/api/attachments", async ([FromQuery][Required]string email, [FromServices]IMemoryCache memoryCache, [FromServices]ILogger<Program> logger) =>
+app.MapGet("/api/attachments", async (HttpContext context, [FromQuery][Required]string email, [FromServices]IMemoryCache memoryCache, [FromServices]ILogger<Program> logger) =>
 {
+    email = email.ToLower();
+
     // 1. use locally logged on user credential (az login)
     //   - user account must have tenant wide permissions to read email
     // var credential = new DefaultAzureCredential();
@@ -318,7 +320,6 @@ app.MapGet("/api/attachments", async ([FromQuery][Required]string email, [FromSe
     logger.LogShInfo($"Cache Items: {memoryCache.GetCurrentStatistics()?.CurrentEntryCount}");
 
     // - retrieve access token from memory cache
-    email = email.ToLower();
     var accessToken = memoryCache.Get($"{email}_access_token") as string;
 
     // - use access token from scoped variable: accessToken
@@ -326,9 +327,9 @@ app.MapGet("/api/attachments", async ([FromQuery][Required]string email, [FromSe
 
     if (string.IsNullOrEmpty(accessToken))
     {
-        var message = $"Access token is missing for email: {email}";
-        logger.LogShError(message);
-        return Results.NotFound(message);
+        var errorMessage = $"Access token is missing for email: {email}";
+        logger.LogShError(errorMessage);
+        return Results.NotFound(errorMessage);
     }
     logger.LogShInfo($"Access Token: {accessToken}");
 
@@ -338,29 +339,47 @@ app.MapGet("/api/attachments", async ([FromQuery][Required]string email, [FromSe
     // use graph client to read email
     var userInbox = graphClient.Me;
 
-    var messagesResponse = await userInbox.Messages.GetAsync(config => config.QueryParameters.Top = 50);
+    var messagesResponse = await userInbox.Messages.GetAsync(config =>
+    {
+        config.QueryParameters.Top = 1;
+        // config.QueryParameters.Orderby = [ "receivedDateTime asc" ];
+        config.QueryParameters.Select = [ "id", "subject" ];
+        config.QueryParameters.Filter = "hasAttachments eq true";
+    });
     if (messagesResponse == null || messagesResponse.Value == null)
     {
-        return Results.NotFound();
+        var errorMessage = $"No emails with attachments found in inbox: {email}";
+        logger.LogShError(errorMessage);
+        return Results.NotFound(errorMessage);
     }
 
-    var myMessage = messagesResponse.Value.FirstOrDefault(m => m.HasAttachments ?? false);
-    if (myMessage == null) return Results.NotFound();
-
-
-    var attachmentsResponse = await userInbox.Messages[myMessage.Id].Attachments.GetAsync();
-    logger.LogShInfo($"Attachment Count: {attachmentsResponse?.Value?.Count}");
-
-    foreach (var attachment in attachmentsResponse?.Value ?? [])
+    var firstMessage = messagesResponse.Value.FirstOrDefault();
+    if (firstMessage == null)
     {
-        logger.LogShInfo($"Attachment Name: {attachment.Name}");
+        var errorMessage = $"Error retrieving oldest email from inbox: {email}";
+        logger.LogShError(errorMessage);
+        return Results.NotFound(errorMessage);
     }
 
-    var attachments = (attachmentsResponse?.Value ?? [])
-        .Select(a => new { myMessage.Subject, AttachmentId = a.Id, Filename = a.Name });
+    var emlStream = await userInbox.Messages[firstMessage.Id].Content.GetAsync();
+    if (emlStream == null)
+    {
+        var errorMessage = $"Error retrieving email content from inbox: {email}";
+        logger.LogShError(errorMessage);
+        return Results.NotFound(errorMessage);
+    }
 
-    return attachments.Any() ? Results.Ok(attachments) : Results.NotFound();
-    // return Results.File(fileAttachment.ContentBytes, fileAttachment.ContentType, fileAttachment.Name);
+    var emlContent = await new StreamReader(emlStream).ReadToEndAsync();
+
+    // return .eml content with content disposition so the browser prompts user to download the file
+    var contentDisposition = new System.Net.Mime.ContentDisposition
+    {
+        FileName = $"{firstMessage.Subject}.eml",
+        Inline = false
+    };
+    context.Response.Headers.Append("Content-Disposition", contentDisposition.ToString());
+
+    return Results.Content(emlContent, "message/rfc822");
 })
 .WithName("GetAttachments")
 .WithDescription("Read email ttachments")
