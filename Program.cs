@@ -68,6 +68,11 @@ if (scope == null)
     nlogger.Error("AzureAd:Scope is not configured");
     throw new Exception("AzureAd:Scope is not configured");
 }
+else
+{
+    // make sure we get a refresh token
+    scope = $"offline_access {scope}";
+}
 // var email = configRoot.GetSection("Exchange")["Email"];
 // if (email == null)
 // {
@@ -126,6 +131,8 @@ builder.Services.AddSwaggerGen(c =>
     });
 });
 
+builder.Services.AddHttpClient();
+
 // builder.Services.AddControllers();
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddMicrosoftIdentityWebApi(builder.Configuration.GetSection("AzureAd"))
@@ -152,7 +159,6 @@ builder.Services.AddDistributedMemoryCache();
 builder.Services.AddMemoryCache();
 // 4. Simple scoped variable cache
 // var accessToken = "";
-// var refreshToken = "";
 
 builder.Services.AddEndpointsApiExplorer();
 
@@ -201,7 +207,7 @@ app.MapGet("/api/token", ([FromServices]ILogger<Program> logger) =>
 .WithDisplayName("Get Token")
 .WithTags("Token");
 
-app.MapGet("/", async (HttpContext context, [FromServices]IMemoryCache memoryCache, [FromServices]ILogger<Program> logger) =>
+app.MapGet("/", async (HttpContext context, [FromServices]IMemoryCache memoryCache, [FromServices]HttpClient httpClient, [FromServices]ILogger<Program> logger) =>
 {
     logger.LogShInfo($"Query string: {context.Request.QueryString}");
 
@@ -218,7 +224,7 @@ app.MapGet("/", async (HttpContext context, [FromServices]IMemoryCache memoryCac
     //     RedirectUri = new Uri(redirectUri)
     // };
     // var credential = new AuthorizationCodeCredential(tenantId, clientId, clientSecret, code, options);
-    
+
     //   - either request a token and log it.  credential (i.e. authorization code) can only be used once
     //     once GetTokenAsync is call, credential cannot be use to create GraphServiceClient
     // var tokenRequestContext = new TokenRequestContext([scope]);
@@ -244,61 +250,27 @@ app.MapGet("/", async (HttpContext context, [FromServices]IMemoryCache memoryCac
     // log the access token. refresh token is not exposed
     // logger.LogShInfo($"Access Token: {result.AccessToken}");
 
-    // save access token to in memory cache
-    // memoryCache.Set("access_token", result.AccessToken, TimeSpan.FromMinutes(60));
-
     // 3. use HttpClient to call raw OAuth2 token URL to retrieve access a refresh token
-    //   - this is not recommended due to security reasons
-    var httpClient = new HttpClient();
-    var tokenResponse = await httpClient.PostAsync(
-        $"{instance}/{tenantId}/oauth2/v2.0/token",
-        new FormUrlEncodedContent(new Dictionary<string, string>
-        {
-            { "client_id", clientId },
-            { "client_secret", clientSecret },
-            { "grant_type", "authorization_code" },
-            { "code", code },
-            { "redirect_uri", redirectUri },
-            { "scope", scope }
-        }));
-    var tokenContent = await tokenResponse.Content.ReadAsStringAsync();
-    logger.LogShInfo($"Token Response: {tokenContent}");
-
-    //  - parse the access token from the response
-    var token = JsonSerializer.Deserialize<Dictionary<string, object>>(tokenContent) ?? [];
-
-    // - log access and refresh tokens from the response
-    logger.LogShInfo($"Access Token: {token["access_token"]}");
-    logger.LogShInfo($"Refresh Token: {token["refresh_token"]}");
-
-    // parse unique_name from access_token
-    var accessToken = $"{token["access_token"]}";
-    var jwt = accessToken?.Split('.');
-    var jwtPayload = jwt?.Length > 1 ? JsonSerializer.Deserialize<Dictionary<string, object>>(Base64UrlEncoder.Decode(jwt[1])) : default;
-    var uniqueName = $"{jwtPayload?["unique_name"]}".ToLower();
-
-    logger.LogShInfo($"Unique Name: {uniqueName}");
-
-    // save access and refresh tokens to in memory cache
-    memoryCache.Set($"{uniqueName}_access_token", $"{token["access_token"]}", TimeSpan.FromMinutes(60));
-    memoryCache.Set($"{uniqueName}_refresh_token",$"{token["refresh_token"]}", TimeSpan.FromMinutes(60));
-
-    // save access and refresh tokens to scoped variables
-    // accessToken = $"{token["access_token"]}";
-    // refreshToken = $"{token["refresh_token"]}";
-
-    return Results.Ok(new
+    var accessToken = await GetAccessToken(logger, memoryCache, httpClient, code);
+    if (string.IsNullOrEmpty(accessToken))
     {
-        AccessToken = token["access_token"],
-        RefreshToken = token["refresh_token"]
-    });
+        var errorMessage = "Failed to get access token with authorization code";
+        logger.LogShError(errorMessage);
+        return Results.NotFound(errorMessage);
+    }
+    logger.LogShInfo($"Access Token: {accessToken}");
+
+    // save access token to scoped variable
+    // accessToken = await GetAccessToken(logger, memoryCache, code);
+
+    return Results.Ok(accessToken);
 })
 .WithName("SaveToken")
 .WithDescription("Receives the authorization token, requests and stores the access and refresh tokens to cache")
 .WithDisplayName("Save Token")
 .WithTags("Token");
 
-app.MapGet("/api/attachments", async (HttpContext context, [FromQuery][Required]string email, [FromServices]IMemoryCache memoryCache, [FromServices]ILogger<Program> logger) =>
+app.MapGet("/api/attachments", async (HttpContext context, [FromQuery][Required]string email, [FromServices]HttpClient httpClient, [FromServices]IMemoryCache memoryCache, [FromServices]ILogger<Program> logger) =>
 {
     email = email.ToLower();
 
@@ -319,12 +291,10 @@ app.MapGet("/api/attachments", async (HttpContext context, [FromQuery][Required]
     //   - list all items in memory cache
     logger.LogShInfo($"Cache Items: {memoryCache.GetCurrentStatistics()?.CurrentEntryCount}");
 
-    // - retrieve access token from memory cache
-    var accessToken = memoryCache.Get($"{email}_access_token") as string;
-
     // - use access token from scoped variable: accessToken
     // accessToken = accessToken
 
+    var accessToken = await GetAccessToken(logger, memoryCache, httpClient, email: email);
     if (string.IsNullOrEmpty(accessToken))
     {
         var errorMessage = $"Access token is missing for email: {email}";
@@ -342,7 +312,6 @@ app.MapGet("/api/attachments", async (HttpContext context, [FromQuery][Required]
     var messagesResponse = await userInbox.Messages.GetAsync(config =>
     {
         config.QueryParameters.Top = 1;
-        // config.QueryParameters.Orderby = [ "receivedDateTime asc" ];
         config.QueryParameters.Select = [ "id", "subject" ];
         config.QueryParameters.Filter = "hasAttachments eq true";
     });
@@ -387,6 +356,102 @@ app.MapGet("/api/attachments", async (HttpContext context, [FromQuery][Required]
 .WithTags("Email");
 
 app.Run();
+
+async Task<string?> GetAccessToken(ILogger<Program> logger, IMemoryCache memoryCache, HttpClient httpClient, string? grantToken = null, string? email = null)
+{
+    var grantType = "authorization_code";
+    var grantTokenType = "code";
+
+    // no authorization code, look for active access token, or refresh token
+    if (grantToken == null)
+    {
+        // this should not happen, if no authoization code we need the email address to look up cached tokens
+        if (email == null)
+        {
+            return null;
+        }
+
+        // retrieve access token from memory cache
+        var cachedAccessToken = memoryCache.Get($"{email}_access_token") as string;
+        if (cachedAccessToken != null)
+        {
+            logger.LogShInfo($"Access token found in cache for email: {email}");
+
+            // parse access token to test expiration
+            var cachedJwt = cachedAccessToken.Split('.');
+            var cachedJwtPayload = cachedJwt.Length > 1
+                ? JsonSerializer.Deserialize<Dictionary<string, object>>(Base64UrlEncoder.Decode(cachedJwt[1]))
+                : default;
+
+            var exp = (cachedJwtPayload?["exp"] as JsonElement?)?.GetInt64();
+            if (!exp.HasValue)
+            {
+                logger.LogShError("Access token expiration field, exp, is missing");
+                return null;
+            }
+
+            var expDate = DateTimeOffset.FromUnixTimeSeconds(exp.Value);
+            var now = DateTimeOffset.Now;
+            if (expDate > now)
+            {
+                logger.LogShInfo($"Access token valid through: {expDate}");
+                return cachedAccessToken;
+            }
+
+            logger.LogShInfo($"Access token expired on: {expDate}, current time: {now}");
+        }
+
+        // access token expired or missing, use refresh token to get new access token
+        grantType = "refresh_token";
+        grantTokenType = "refresh_token";
+
+        // retrieve refresh token from memory cache
+        grantToken = memoryCache.Get($"{email}_refresh_token") as string;
+        if (grantToken == null)
+        {
+            logger.LogShError($"Refresh token is missing for email: {email}");
+            return null;
+        }
+
+        logger.LogShInfo($"Refresh token found in cache for email: {email}");
+    }
+
+    // request access token using authorization code or refresh token
+    var tokenResponse = await httpClient.PostAsync(
+        $"{instance}/{tenantId}/oauth2/v2.0/token",
+        new FormUrlEncodedContent(new Dictionary<string, string>
+        {
+            { "client_id", clientId },
+            { "client_secret", clientSecret },
+            { "grant_type", grantType },
+            { grantTokenType, grantToken },
+            { "redirect_uri", redirectUri },
+            { "scope", scope }
+        }));
+    var tokenContent = await tokenResponse.Content.ReadAsStringAsync();
+    logger.LogShInfo($"Token Response: {tokenContent}");
+
+    //  parse the access token from the response
+    var tokenJson = JsonSerializer.Deserialize<Dictionary<string, object>>(tokenContent) ?? [];
+    var accessToken = $"{tokenJson["access_token"]}";
+    var refreshToken = $"{tokenJson["refresh_token"]}";
+
+    logger.LogShInfo($"Access Token: {accessToken}");
+    logger.LogShInfo($"Refresh Token: {refreshToken}");
+
+    // parse unique_name from access_token
+    var jwt = accessToken?.Split('.');
+    var jwtPayload = jwt?.Length > 1 ? JsonSerializer.Deserialize<Dictionary<string, object>>(Base64UrlEncoder.Decode(jwt[1])) : default;
+    var uniqueName = $"{jwtPayload?["unique_name"]}".ToLower();
+
+    logger.LogShInfo($"Unique Name: {uniqueName}");
+
+    // save new access and refresh tokens to in memory cache
+    memoryCache.Set($"{uniqueName}_access_token", accessToken, TimeSpan.FromMinutes(60));
+    memoryCache.Set($"{uniqueName}_refresh_token", refreshToken, TimeSpan.FromMinutes(60));
+
+    return accessToken;
+}
 
 internal class TokenProvider : IAccessTokenProvider
 {
