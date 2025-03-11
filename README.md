@@ -8,3 +8,12 @@
     dotnet tool install --global dotnet-sql-cache
     dotnet sql-cache create "Data Source=hpv-fcdbdev1-1.co.ihc.com; Database=SHWK;Integrated Security=True;Max Pool Size=250; Connection Timeout=90;Command Timeout=90;TrustServerCertificate=True" dbo TestCache
     ```
+
+## Generating New CodeVerifier
+
+- Copy the results of the following script to AzureAd:CodeVerifier in appsettings.json (or CyberArk key)
+    ```powershell
+    $bytes = New-Object byte[] 64
+    [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
+    [System.Convert]::ToBase64String($bytes).Replace("+","-").Replace("/","_").Replace("=","")
+    ```

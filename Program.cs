@@ -11,7 +11,6 @@ using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Graph;
 // using Microsoft.Identity.Client;
-
 // using Microsoft.Graph.Models;
 // using Microsoft.Identity.Web;
 // using Microsoft.Identity.Web.TokenCacheProviders.Distributed;
@@ -76,7 +75,12 @@ else
     // make sure we get a refresh token
     scope = $"offline_access {scope}";
 }
-var codeVerifier = GenerateCodeVerifier();
+var codeVerifier = configRoot["AzureAd:CodeVerifier"];
+if (codeVerifier  == null)
+{
+    nlogger.Error("AzureAd:CodeVerifier is not configured");
+    throw new Exception("AzureAd:CodeVerifier is not configured");
+}
 // var email = configRoot.GetSection("Exchange")["Email"];
 // if (email == null)
 // {
@@ -456,20 +460,6 @@ async Task<string?> GetAccessToken(ILogger<Program> logger, IDistributedCache ca
     await cache.SetStringAsync($"{uniqueName}_refresh_token", refreshToken);
 
     return accessToken;
-}
-
-static string GenerateCodeVerifier()
-{
-    const int length = 64; // Length can be between 43 and 128
-    using (var rng = RandomNumberGenerator.Create())
-    {
-        var bytes = new byte[length];
-        rng.GetBytes(bytes);
-        return Convert.ToBase64String(bytes)
-            .Replace("+", "-")
-            .Replace("/", "_")
-            .Replace("=", "");
-    }
 }
 
 static string GenerateCodeChallenge(string codeVerifier)
