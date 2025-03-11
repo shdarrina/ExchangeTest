@@ -1,17 +1,19 @@
 // using Azure.Core;
 // using Azure.Identity;
 using System.ComponentModel.DataAnnotations;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using ExchangeTest.Extensions;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
+// using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Graph;
 // using Microsoft.Identity.Client;
 
 // using Microsoft.Graph.Models;
-using Microsoft.Identity.Web;
-using Microsoft.Identity.Web.TokenCacheProviders.Distributed;
+// using Microsoft.Identity.Web;
+// using Microsoft.Identity.Web.TokenCacheProviders.Distributed;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.Kiota.Abstractions.Authentication;
 using Microsoft.OpenApi.Models;
@@ -73,6 +75,7 @@ else
     // make sure we get a refresh token
     scope = $"offline_access {scope}";
 }
+var codeVerifier = GenerateCodeVerifier();
 // var email = configRoot.GetSection("Exchange")["Email"];
 // if (email == null)
 // {
@@ -97,64 +100,64 @@ builder.Services.AddSwaggerGen(c =>
     c.SwaggerDoc("v1", new OpenApiInfo { Title = "Select Health Medical Management - Exchange Test Api", Version = "v1" });
 
     // Define the OAuth2 scheme that's in use
-    c.AddSecurityDefinition("oauth2", new OpenApiSecurityScheme
-    {
-        Type = SecuritySchemeType.OAuth2,
-        Flows = new OpenApiOAuthFlows
-        {
-            AuthorizationCode = new OpenApiOAuthFlow
-            {
-                AuthorizationUrl = new Uri($"{instance}/{tenantId}/oauth2/v2.0/authorize"),
-                TokenUrl = new Uri($"{instance}/{tenantId}/oauth2/v2.0/token"),
-                Scopes = new Dictionary<string, string>
-                {
-                    { scope, "Read user email" }
-                }
-            }
-        }
-    });
+    // c.AddSecurityDefinition("oauth2", new OpenApiSecurityScheme
+    // {
+    //     Type = SecuritySchemeType.OAuth2,
+    //     Flows = new OpenApiOAuthFlows
+    //     {
+    //         AuthorizationCode = new OpenApiOAuthFlow
+    //         {
+    //             AuthorizationUrl = new Uri($"{instance}/{tenantId}/oauth2/v2.0/authorize"),
+    //             TokenUrl = new Uri($"{instance}/{tenantId}/oauth2/v2.0/token"),
+    //             Scopes = new Dictionary<string, string>
+    //             {
+    //                 { scope, "Read user email" }
+    //             }
+    //         }
+    //     }
+    // });
 
     // Apply the OAuth2 scheme globally
-    c.AddSecurityRequirement(new OpenApiSecurityRequirement
-    {
-        {
-            new OpenApiSecurityScheme
-            {
-                Reference = new OpenApiReference
-                {
-                    Type = ReferenceType.SecurityScheme,
-                    Id = "oauth2"
-                }
-            },
-            new[] { scope }
-        }
-    });
+    // c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    // {
+    //     {
+    //         new OpenApiSecurityScheme
+    //         {
+    //             Reference = new OpenApiReference
+    //             {
+    //                 Type = ReferenceType.SecurityScheme,
+    //                 Id = "oauth2"
+    //             }
+    //         },
+    //         new[] { scope }
+    //     }
+    // });
 });
 
 builder.Services.AddHttpClient();
 
 // builder.Services.AddControllers();
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddMicrosoftIdentityWebApi(builder.Configuration.GetSection("AzureAd"))
-    .EnableTokenAcquisitionToCallDownstreamApi()
-    .AddDistributedTokenCaches();
+// builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+//     .AddMicrosoftIdentityWebApi(builder.Configuration.GetSection("AzureAd"))
+//     .EnableTokenAcquisitionToCallDownstreamApi()
+//     .AddDistributedTokenCaches();
 
 // distributed token cache
-builder.Services.Configure<MsalDistributedTokenCacheAdapterOptions>(options =>
-{
-    options.Encrypt = true;
-    options.SlidingExpiration = TimeSpan.FromDays(14);
-    options.DisableL1Cache = false;
-});
-// 1. use SQL Server distributed token cache
-// builder.Services.AddDistributedSqlServerCache(options =>
+// builder.Services.Configure<MsalDistributedTokenCacheAdapterOptions>(options =>
 // {
-//     options.ConnectionString = builder.Configuration.GetConnectionString("TokenCache");
-//     options.SchemaName = configRoot.GetSection("TokenCache")["SchemaName"];
-//     options.TableName = configRoot.GetSection("TokenCache")["TableName"];
+//     options.Encrypt = true;
+//     options.SlidingExpiration = TimeSpan.FromDays(14);
+//     options.DisableL1Cache = false;
 // });
+// 1. use SQL Server distributed token cache
+builder.Services.AddDistributedSqlServerCache(options =>
+{
+    options.ConnectionString = builder.Configuration.GetConnectionString("TokenCache");
+    options.SchemaName = configRoot.GetSection("TokenCache")["SchemaName"];
+    options.TableName = configRoot.GetSection("TokenCache")["TableName"];
+});
 // 2. use in memory distributed token cache
-builder.Services.AddDistributedMemoryCache();
+// builder.Services.AddDistributedMemoryCache();
 // 3. use simple memory cache
 builder.Services.AddMemoryCache();
 // 4. Simple scoped variable cache
@@ -175,14 +178,14 @@ app.UseSwaggerUI(c =>
 {
     c.SwaggerEndpoint("/swagger/v1/swagger.json", "Select Health Medical Management - Exchange Test Api v1");
     c.RoutePrefix = "swagger";
-    c.OAuthClientId(builder.Configuration["AzureAd:ClientId"]);
-    c.OAuthClientSecret(builder.Configuration["AzureAd:ClientSecret"]);
+    // c.OAuthClientId(builder.Configuration["AzureAd:ClientId"]);
+    // c.OAuthClientSecret(builder.Configuration["AzureAd:ClientSecret"]);
     // c.OAuthUsePkce(); // Use PKCE (Proof Key for Code Exchange)
-    c.OAuth2RedirectUrl(builder.Configuration["AzureAd:RedirectUri"]); // Specify your redirect URI here
+    // c.OAuth2RedirectUrl(builder.Configuration["AzureAd:RedirectUri"]); // Specify your redirect URI here
 });
 // app.UseHttpsRedirection();
-app.UseAuthentication();
-app.UseAuthorization();
+// app.UseAuthentication();
+// app.UseAuthorization();
 // app.MapControllers();
 
 app.MapGet("/api/token", ([FromServices]ILogger<Program> logger) =>
@@ -198,7 +201,7 @@ app.MapGet("/api/token", ([FromServices]ILogger<Program> logger) =>
     // return Results.Ok();
 
     // 2. redirect using raw OAuth2 authorization code flow URL
-    var url = $"{instance}/{tenantId}/oauth2/v2.0/authorize?client_id={clientId}&response_type=code&redirect_uri={redirectUri}&response_mode=query&scope={scope}&state=12345";
+    var url = $"{instance}/{tenantId}/oauth2/v2.0/authorize?client_id={clientId}&response_type=code&redirect_uri={redirectUri}&response_mode=query&scope={scope}&code_challenge={GenerateCodeChallenge(codeVerifier)}&code_challenge_method=S256";
     logger.LogShInfo($"Redirecting to: {url}");
     return Results.Redirect(url);
 })
@@ -426,7 +429,8 @@ async Task<string?> GetAccessToken(ILogger<Program> logger, IMemoryCache memoryC
             { "grant_type", grantType },
             { grantTokenType, grantToken },
             { "redirect_uri", redirectUri },
-            { "scope", scope }
+            { "scope", scope },
+            { "code_verifier", codeVerifier }
         }));
     var tokenContent = await tokenResponse.Content.ReadAsStringAsync();
     logger.LogShInfo($"Token Response: {tokenContent}");
@@ -451,6 +455,32 @@ async Task<string?> GetAccessToken(ILogger<Program> logger, IMemoryCache memoryC
     memoryCache.Set($"{uniqueName}_refresh_token", refreshToken, TimeSpan.FromMinutes(60));
 
     return accessToken;
+}
+
+static string GenerateCodeVerifier()
+{
+    const int length = 64; // Length can be between 43 and 128
+    using (var rng = RandomNumberGenerator.Create())
+    {
+        var bytes = new byte[length];
+        rng.GetBytes(bytes);
+        return Convert.ToBase64String(bytes)
+            .Replace("+", "-")
+            .Replace("/", "_")
+            .Replace("=", "");
+    }
+}
+
+static string GenerateCodeChallenge(string codeVerifier)
+{
+    using (var sha256 = SHA256.Create())
+    {
+        var bytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(codeVerifier));
+        return Convert.ToBase64String(bytes)
+            .Replace("+", "-")
+            .Replace("/", "_")
+            .Replace("=", "");
+    }
 }
 
 internal class TokenProvider : IAccessTokenProvider
