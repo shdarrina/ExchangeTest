@@ -7,6 +7,7 @@ using System.Text.Json;
 using ExchangeTest.Extensions;
 // using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Caching.Distributed;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Graph;
 // using Microsoft.Identity.Client;
@@ -159,7 +160,7 @@ builder.Services.AddDistributedSqlServerCache(options =>
 // 2. use in memory distributed token cache
 // builder.Services.AddDistributedMemoryCache();
 // 3. use simple memory cache
-builder.Services.AddMemoryCache();
+// builder.Services.AddMemoryCache();
 // 4. Simple scoped variable cache
 // var accessToken = "";
 
@@ -210,7 +211,7 @@ app.MapGet("/api/token", ([FromServices]ILogger<Program> logger) =>
 .WithDisplayName("Get Token")
 .WithTags("Token");
 
-app.MapGet("/", async (HttpContext context, [FromServices]IMemoryCache memoryCache, [FromServices]HttpClient httpClient, [FromServices]ILogger<Program> logger) =>
+app.MapGet("/", async (HttpContext context, [FromServices]IDistributedCache cache, [FromServices]HttpClient httpClient, [FromServices]ILogger<Program> logger) =>
 {
     logger.LogShInfo($"Query string: {context.Request.QueryString}");
 
@@ -254,7 +255,7 @@ app.MapGet("/", async (HttpContext context, [FromServices]IMemoryCache memoryCac
     // logger.LogShInfo($"Access Token: {result.AccessToken}");
 
     // 3. use HttpClient to call raw OAuth2 token URL to retrieve access a refresh token
-    var accessToken = await GetAccessToken(logger, memoryCache, httpClient, code);
+    var accessToken = await GetAccessToken(logger, cache, httpClient, code);
     if (string.IsNullOrEmpty(accessToken))
     {
         var errorMessage = "Failed to get access token with authorization code";
@@ -273,7 +274,7 @@ app.MapGet("/", async (HttpContext context, [FromServices]IMemoryCache memoryCac
 .WithDisplayName("Save Token")
 .WithTags("Token");
 
-app.MapGet("/api/attachments", async (HttpContext context, [FromQuery][Required]string email, [FromServices]HttpClient httpClient, [FromServices]IMemoryCache memoryCache, [FromServices]ILogger<Program> logger) =>
+app.MapGet("/api/attachments", async (HttpContext context, [FromQuery][Required]string email, [FromServices]HttpClient httpClient, [FromServices]IDistributedCache cache, [FromServices]ILogger<Program> logger) =>
 {
     email = email.ToLower();
 
@@ -292,12 +293,12 @@ app.MapGet("/api/attachments", async (HttpContext context, [FromQuery][Required]
 
     // 4. retrieve access token from in memory cache
     //   - list all items in memory cache
-    logger.LogShInfo($"Cache Items: {memoryCache.GetCurrentStatistics()?.CurrentEntryCount}");
+    // logger.LogShInfo($"Cache Items: {memoryCache.GetCurrentStatistics()?.CurrentEntryCount}");
 
     // - use access token from scoped variable: accessToken
     // accessToken = accessToken
 
-    var accessToken = await GetAccessToken(logger, memoryCache, httpClient, email: email);
+    var accessToken = await GetAccessToken(logger, cache, httpClient, email: email);
     if (string.IsNullOrEmpty(accessToken))
     {
         var errorMessage = $"Access token is missing for email: {email}";
@@ -360,7 +361,7 @@ app.MapGet("/api/attachments", async (HttpContext context, [FromQuery][Required]
 
 app.Run();
 
-async Task<string?> GetAccessToken(ILogger<Program> logger, IMemoryCache memoryCache, HttpClient httpClient, string? grantToken = null, string? email = null)
+async Task<string?> GetAccessToken(ILogger<Program> logger, IDistributedCache cache, HttpClient httpClient, string? grantToken = null, string? email = null)
 {
     var grantType = "authorization_code";
     var grantTokenType = "code";
@@ -375,7 +376,7 @@ async Task<string?> GetAccessToken(ILogger<Program> logger, IMemoryCache memoryC
         }
 
         // retrieve access token from memory cache
-        var cachedAccessToken = memoryCache.Get($"{email}_access_token") as string;
+        var cachedAccessToken = await cache.GetStringAsync($"{email}_access_token");
         if (cachedAccessToken != null)
         {
             logger.LogShInfo($"Access token found in cache for email: {email}");
@@ -409,7 +410,7 @@ async Task<string?> GetAccessToken(ILogger<Program> logger, IMemoryCache memoryC
         grantTokenType = "refresh_token";
 
         // retrieve refresh token from memory cache
-        grantToken = memoryCache.Get($"{email}_refresh_token") as string;
+        grantToken = await cache.GetStringAsync($"{email}_refresh_token");
         if (grantToken == null)
         {
             logger.LogShError($"Refresh token is missing for email: {email}");
@@ -444,15 +445,15 @@ async Task<string?> GetAccessToken(ILogger<Program> logger, IMemoryCache memoryC
     logger.LogShInfo($"Refresh Token: {refreshToken}");
 
     // parse unique_name from access_token
-    var jwt = accessToken?.Split('.');
+    var jwt = accessToken.Split('.');
     var jwtPayload = jwt?.Length > 1 ? JsonSerializer.Deserialize<Dictionary<string, object>>(Base64UrlEncoder.Decode(jwt[1])) : default;
     var uniqueName = $"{jwtPayload?["unique_name"]}".ToLower();
 
     logger.LogShInfo($"Unique Name: {uniqueName}");
 
     // save new access and refresh tokens to in memory cache
-    memoryCache.Set($"{uniqueName}_access_token", accessToken, TimeSpan.FromMinutes(60));
-    memoryCache.Set($"{uniqueName}_refresh_token", refreshToken, TimeSpan.FromMinutes(60));
+    await cache.SetStringAsync($"{uniqueName}_access_token", accessToken);
+    await cache.SetStringAsync($"{uniqueName}_refresh_token", refreshToken);
 
     return accessToken;
 }
